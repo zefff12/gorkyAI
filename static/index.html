@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Голосовой ассистент</title>
+  <link rel="stylesheet" href="/static/style.css?v=7">
+</head>
+<body>
+  <div class="layout">
+    <main class="chat">
+      <header class="top">
+        <div>
+          <h1>Ассистент задач и встреч</h1>
+          <p class="sub" id="status">Нажмите на микрофон или напишите запрос</p>
+        </div>
+        <div class="controls">
+          <label class="toggle" title="Озвучивать ответы">
+            <input type="checkbox" id="speakToggle" checked> Озвучивать
+          </label>
+          <label class="user" title="Ваш личный ID: записи видны только по нему. Чтобы открыть свой список на другом устройстве, введите там этот же ID">
+            👤 <input id="userId" maxlength="40" spellcheck="false">
+          </label>
+        </div>
+      </header>
+
+      <section id="log" class="log" aria-live="polite"></section>
+
+      <div class="chips" id="chips">
+        <button>Что у меня на этой неделе?</button>
+        <button>Напомни завтра в 10 утра позвонить Ивану</button>
+        <button>Добавь встречу с командой в пятницу в 15:00</button>
+        <button>Поставь встречу с Иваном завтра</button>
+        <button>Найди задачу про презентацию</button>
+        <button>Когда у меня была встреча с Иваном?</button>
+        <button>А перенеси её на понедельник</button>
+        <button>Переименуй её в Созвон с Иваном</button>
+        <button>Каждый понедельник в 10 планёрка</button>
+        <button>Найди слайды для выступления</button>
+      </div>
+
+      <form id="form" class="composer" autocomplete="off">
+        <button type="button" id="mic" class="mic" aria-label="Говорить">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+        </button>
+        <input id="input" placeholder="Например: что у меня завтра?" maxlength="1000">
+        <button type="submit" class="send">Отправить</button>
+      </form>
+    </main>
+
+    <aside class="agenda">
+      <div class="agenda-head">
+        <h2>Ближайшие 7 дней</h2>
+        <button id="reset" class="link" title="Удалить все мои записи">очистить</button>
+      </div>
+      <div id="agenda"></div>
+      <button id="demoData" class="link demo" hidden>Загрузить тестовые данные из задания (1000 записей)</button>
+      <p class="meta" id="meta"></p>
+    </aside>
+  </div>
+  <script src="/static/app.js?v=7"></script>
+</body>
+</html>

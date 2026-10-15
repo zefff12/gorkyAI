@@ -1,0 +1,12 @@
+# Деплой на Render.com: New → Blueprint → выбрать этот репозиторий
+services:
+  - type: web
+    name: voice-assistant
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_TZ
+        value: Europe/Moscow
+      - key: ANTHROPIC_API_KEY
+        sync: false
