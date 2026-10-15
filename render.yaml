@@ -1,4 +1,4 @@
-# Деплой на Render.com: New → Blueprint → выбрать этот репозиторий
+# Деплой на Render.com: Dashboard → New → Blueprint → выбрать этот репозиторий
 services:
   - type: web
     name: voice-assistant
@@ -8,5 +8,9 @@ services:
     envVars:
       - key: APP_TZ
         value: Europe/Moscow
+      # Модель семантического поиска не помещается в 512 МБ бесплатного тарифа.
+      # На тарифе Starter (2 ГБ) и выше можно поставить 1.
+      - key: SEMANTIC_SEARCH
+        value: "0"
       - key: ANTHROPIC_API_KEY
         sync: false
