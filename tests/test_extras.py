@@ -75,10 +75,10 @@ def _docs():
 
 
 def test_semantic_finds_without_shared_words():
-    emb = FakeEmbedder({("выступление перед инвесторами", "Подготовить презентацию"): 0.72})
-    hits = search(_docs(), "выступление перед инвесторами", NOW.date(), embedder=emb)
+    emb = FakeEmbedder({("речь перед инвесторами", "Подготовить презентацию"): 0.72})
+    hits = search(_docs(), "речь перед инвесторами", NOW.date(), embedder=emb)
     assert [h.event.id for h in hits] == [1]
-    assert search(_docs(), "выступление перед инвесторами", NOW.date()) == []      # без семантики — пусто
+    assert search(_docs(), "речь перед инвесторами", NOW.date()) == []      # без семантики — пусто
 
 
 def test_semantic_never_outranks_exact_match():

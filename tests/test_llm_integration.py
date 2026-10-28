@@ -29,7 +29,7 @@ class FakeLLM:
         self.result = result
         self.calls = 0
 
-    def parse(self, text, now, last_title=None):
+    def parse(self, text, now, last_title=None, history=None):
         self.calls += 1
         return self.result
 

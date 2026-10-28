@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config
-from .assistant import Assistant
+from .assistant import UPCOMING_DAYS, Assistant
 from .seed import DEMO_USER, seed_if_empty
 from .storage import Storage
 
@@ -65,14 +65,74 @@ def message(body: MessageIn, x_user_id: str | None = Header(None)):
 def events(
     start: date | None = Query(None),
     end: date | None = Query(None),
+    undated: bool = Query(True, description="добавить невыполненные записи без даты"),
     x_user_id: str | None = Header(None),
 ):
     today = config.now().date()
     start = start or today
-    end = end or start + timedelta(days=6)
+    end = end or start + timedelta(days=UPCOMING_DAYS - 1)
     if (end - start).days > 366:
         raise HTTPException(400, "Слишком большой период")
-    return [e.to_dict() for e in storage.in_range(_user(x_user_id), start, end)]
+    return [e.to_dict() for e in storage.in_range(_user(x_user_id), start, end, include_undated=undated)]
+
+
+class EventPatch(BaseModel):
+    done: bool
+
+
+@app.patch("/api/events/{event_id}")
+def update_event(event_id: int, body: EventPatch, x_user_id: str | None = Header(None)):
+    """Отметить запись выполненной (или снять отметку) кнопкой в интерфейсе."""
+    uid = _user(x_user_id)
+    ev = storage.get(uid, event_id)
+    if ev is None:
+        raise HTTPException(404, "Запись не найдена")
+    ev.done = body.done
+    storage.update(ev)
+    return ev.to_dict()
+
+
+@app.delete("/api/events/{event_id}")
+def delete_event(event_id: int, x_user_id: str | None = Header(None)):
+    """Удалить одну запись кнопкой в интерфейсе."""
+    uid = _user(x_user_id)
+    if not storage.delete(uid, event_id):
+        raise HTTPException(404, "Запись не найдена")
+    assistant.forget_event(uid, event_id)
+    return {"ok": True}
+
+
+@app.get("/api/history")
+def history(limit: int = Query(50, ge=1, le=200), x_user_id: str | None = Header(None)):
+    """История переписки — агент помнит разговор после перезагрузки страницы."""
+    return storage.messages(_user(x_user_id), limit=limit)
+
+
+@app.get("/api/export")
+def export(x_user_id: str | None = Header(None)):
+    """Все данные пользователя: записи, история и контекст диалога."""
+    return storage.export_user(_user(x_user_id))
+
+
+class ImportIn(BaseModel):
+    events: list[dict] = Field(default_factory=list, max_length=5000)
+    messages: list[dict] = Field(default_factory=list, max_length=500)
+    dialog: dict | None = None
+
+
+@app.post("/api/import")
+def import_backup(body: ImportIn, x_user_id: str | None = Header(None)):
+    """Восстановить данные из резервной копии браузера (бесплатный хостинг теряет базу
+    при перезапуске). Только в пустой профиль, чтобы не задвоить записи."""
+    uid = _user(x_user_id)
+    if storage.count(uid) > 0 or storage.messages(uid, limit=1):
+        raise HTTPException(409, "Профиль не пуст — восстановление не требуется")
+    try:
+        restored = storage.import_user(uid, body.model_dump())
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "Повреждённая резервная копия")
+    assistant.reset_user(uid)
+    return restored
 
 
 @app.get("/api/stats")
@@ -85,7 +145,7 @@ def reset(x_user_id: str | None = Header(None)):
     """Удалить все записи пользователя."""
     uid = _user(x_user_id)
     deleted = storage.delete_all(uid)
-    assistant.sessions = {k: v for k, v in assistant.sessions.items() if k[0] != uid}
+    assistant.reset_user(uid)
     return {"ok": True, "deleted": deleted}
 
 

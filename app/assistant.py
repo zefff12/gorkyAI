@@ -14,6 +14,7 @@ from typing import Callable
 from . import config
 from .formatting import (TYPE_ACC, TYPE_NAMES, WEEKDAYS_NOM, count_phrase, describe, human_date, human_time,
                          human_when, plural)
+from .memory import DialogContext, Pending, Session
 from .models import Event, EventType, Intent, ParsedCommand, Period
 from .nlu import dates, rules
 from .nlu.text import tokenize
@@ -30,6 +31,8 @@ ORDINALS = {"первую": 0, "первый": 0, "первое": 0, "1": 0, "в
 NO_TIME_WORDS = {"без", "неважно", "важно", "любое", "любой", "весь", "течение", "никогда", "когда-нибудь", "потом", "знаю", "любое"}
 MAX_SPOKEN = 5
 MAX_SHOWN = 30
+UPCOMING_DAYS = dates.UPCOMING_DAYS      # период по умолчанию для «что у меня?»
+LLM_HISTORY_TURNS = 6
 
 HELP_TEXT = (
     "Я веду ваши задачи, напоминания и встречи. Можно сказать, например: «Напомни завтра в 10 позвонить Ивану», "
@@ -59,22 +62,6 @@ class Reply:
         }
 
 
-@dataclass
-class Pending:
-    kind: str                         # need_title | need_time | need_new_time | need_new_title | confirm_conflict | confirm_delete | choose
-    draft: Event | None = None
-    action: str | None = None         # для choose: reschedule | complete | delete | rename
-    candidates: list[Event] = field(default_factory=list)
-    cmd: ParsedCommand | None = None
-    deadline: bool = False            # дата черновика — срок («до пятницы»), время не нужно
-
-
-@dataclass
-class Session:
-    last_ids: list[int] = field(default_factory=list)
-    pending: Pending | None = None
-
-
 class Assistant:
     def __init__(self, storage: Storage, llm=None, clock: Callable[[], datetime] = config.now,
                  embedder: Embedder | None = None):
@@ -82,23 +69,53 @@ class Assistant:
         self.llm = llm
         self.embedder = embedder
         self.clock = clock
-        self.sessions: dict[tuple[str, str], Session] = {}
+        self.sessions: dict[str, Session] = {}     # кэш; источник правды — таблица dialog_state
+
+    # ------------------------------------------------------------------ память
+
+    def session(self, user_id: str) -> Session:
+        if user_id not in self.sessions:
+            state = self.storage.load_dialog(user_id)
+            self.sessions[user_id] = Session.from_dict(state, lambda i: self.storage.get(user_id, i))
+        return self.sessions[user_id]
+
+    def _persist(self, user_id: str) -> None:
+        self.storage.save_dialog(user_id, self.sessions[user_id].to_dict())
+
+    def forget_event(self, user_id: str, event_id: int) -> None:
+        """Запись удалили не голосом (кнопкой в интерфейсе) — убираем её из контекста."""
+        s = self.session(user_id)
+        s.forget(event_id)
+        if s.pending and (s.pending.draft and s.pending.draft.id == event_id
+                          or any(e.id == event_id for e in s.pending.candidates)):
+            s.pending = None
+        self._persist(user_id)
+
+    def reset_user(self, user_id: str) -> None:
+        self.sessions.pop(user_id, None)
 
     # ------------------------------------------------------------------ entry
 
     def handle(self, user_id: str, text: str, session_id: str = "default") -> Reply:
+        """session_id оставлен для совместимости API: контекст общий для всех вкладок пользователя."""
         text = (text or "").strip()
-        session = self.sessions.setdefault((user_id, session_id), Session())
         if not text:
             return Reply("Я вас не расслышал. Повторите, пожалуйста.", intent="empty")
+        session = self.session(user_id)
         now = self.clock()
+        reply = self._handle(user_id, session, text, now)
+        self.storage.add_message(user_id, "user", text, now)
+        self.storage.add_message(user_id, "assistant", reply.text, now)
+        self._persist(user_id)
+        return reply
 
+    def _handle(self, user_id: str, session: Session, text: str, now: datetime) -> Reply:
         small_talk = _small_talk(text)
         if small_talk:
             return Reply(small_talk, intent="smalltalk", parser="rules")
-
         try:
-            rule_cmd = rules.parse(text, now)
+            # контекст прошлого запроса нужен для коротких реплик: «а на завтра?», «а встречи?»
+            rule_cmd = rules.parse(text, now, context=session.last)
             if session.pending:
                 reply = self._continue_pending(user_id, session, text, rule_cmd, now)
                 if reply is not None:
@@ -117,10 +134,11 @@ class Assistant:
         return reply
 
     def _understand(self, user_id: str, session: Session, text: str, rule_cmd: ParsedCommand, now: datetime) -> ParsedCommand:
-        if self.llm is None or rule_cmd.intent in (Intent.CONFIRM, Intent.REJECT, Intent.HELP):
+        if self.llm is None or rule_cmd.intent in (Intent.CONFIRM, Intent.REJECT, Intent.HELP) or rule_cmd.extras.get("from_context"):
             return rule_cmd
-        last = self.storage.get(user_id, session.last_ids[0]) if len(session.last_ids) == 1 else None
-        llm_cmd = self.llm.parse(text, now, last.title if last else None)
+        last = self.storage.get(user_id, session.focus[0]) if len(session.focus) == 1 else None
+        history = self.storage.messages(user_id, limit=LLM_HISTORY_TURNS)
+        llm_cmd = self.llm.parse(text, now, last.title if last else None, history=history)
         return llm_cmd or rule_cmd
 
     def _dispatch(self, user_id: str, s: Session, cmd: ParsedCommand, now: datetime) -> Reply:
@@ -210,13 +228,17 @@ class Assistant:
             s.pending = None
             return self._finalize_create(user_id, s, draft, now)
 
-        if p.kind in ("confirm_conflict", "confirm_delete"):
+        if p.kind == "confirm_duplicate" and rule_cmd.intent is Intent.CONFIRM:
+            s.pending = None
+            return self._finalize_create(user_id, s, p.draft, now, allow_no_time=True, deadline=True, allow_duplicate=True)
+
+        if p.kind in ("confirm_conflict", "confirm_delete", "confirm_duplicate"):
             if rule_cmd.intent is Intent.CONFIRM:
                 s.pending = None
                 if p.kind == "confirm_conflict":
                     return self._save(user_id, s, p.draft, now)
                 self.storage.delete(user_id, p.draft.id)
-                s.last_ids = []
+                s.forget(p.draft.id)
                 return Reply(f"Удалил {TYPE_ACC[p.draft.type]} «{p.draft.title}».", intent="delete")
             if rule_cmd.intent is Intent.UNKNOWN:
                 return Reply("Скажите «да» или «нет».", awaiting=p.kind)
@@ -237,7 +259,7 @@ class Assistant:
                     return Reply("Назовите номер: «первую», «вторую» и так далее.", awaiting="choose")
                 return None
             s.pending = None
-            s.last_ids = [chosen.id]
+            s.remember([chosen.id])
             return self._do_action(user_id, s, p.action, chosen, p.cmd, now)
         return None
 
@@ -257,7 +279,7 @@ class Assistant:
         return self._finalize_create(user_id, s, draft, now, deadline=cmd.has_deadline)
 
     def _finalize_create(self, user_id: str, s: Session, draft: Event, now: datetime,
-                         allow_no_time: bool = False, deadline: bool = False) -> Reply:
+                         allow_no_time: bool = False, deadline: bool = False, allow_duplicate: bool = False) -> Reply:
         # только время без даты → сегодня, а если время уже прошло — завтра
         if draft.time and not draft.date:
             draft.date = now.date() if draft.time > now.time() else now.date() + timedelta(days=1)
@@ -284,6 +306,14 @@ class Assistant:
                 q = f"Во сколько {human_date(draft.date, now.date())}? Можно ответить «в течение дня»."
             return Reply(q, awaiting="need_time", intent="create")
 
+        if not allow_duplicate:
+            same = self.storage.find_same(user_id, draft)
+            if same:
+                s.pending = Pending("confirm_duplicate", draft=draft)
+                s.remember([same.id])
+                return Reply(f"Такая запись уже есть: {describe(same, now.date())}. Добавить ещё одну?",
+                             events=[same], awaiting="confirm_duplicate", intent="create")
+
         if draft.type is EventType.MEETING and draft.time:
             clashes = self.storage.conflicts(user_id, draft.date, draft.time, draft.duration_min)
             if clashes:
@@ -299,7 +329,7 @@ class Assistant:
     def _save(self, user_id: str, s: Session, draft: Event, now: datetime) -> Reply:
         draft.created_at = now
         saved = self.storage.add(draft)
-        s.last_ids = [saved.id]
+        s.remember([saved.id])
         when = human_when(saved, now.date())
         if saved.type is EventType.REMINDER:
             text = f"Хорошо, напомню {when}: «{saved.title}»."
@@ -324,42 +354,56 @@ class Assistant:
             return self._search(user_id, s, cmd, now)
         period = cmd.period or (Period(cmd.date, cmd.date, human_date(cmd.date, today)) if cmd.date else None)
         if period is None:
-            period = Period(today, today + timedelta(days=6), "в ближайшие 7 дней")
-        events = self.storage.in_range(user_id, period.start, period.end)
+            period = Period(today, today + timedelta(days=UPCOMING_DAYS - 1), f"в ближайшие {UPCOMING_DAYS} дней")
+        s.last = DialogContext(Intent.LIST, cmd.event_type, period, cmd.query, cmd.tense)
+
+        # задачи без срока показываем в любом списке, который включает сегодняшний день
+        with_undated = period.start <= today <= period.end and cmd.event_type is not EventType.MEETING
+        events = self.storage.in_range(user_id, period.start, period.end, include_undated=with_undated)
         if cmd.event_type is EventType.MEETING:
             events = [e for e in events if e.type is EventType.MEETING]
         elif cmd.event_type in (EventType.TASK, EventType.REMINDER):
             events = [e for e in events if e.type is not EventType.MEETING]
-        if cmd.query:
+        if cmd.query and self._query_is_meaningful(user_id, cmd.query, today):
             events = [h.event for h in search(events, cmd.query, today, limit=len(events) or 1)]
         label = _period_label(period, today)
         what = {EventType.MEETING: "встреч", EventType.TASK: "задач", EventType.REMINDER: "задач"}.get(cmd.event_type, "")
-        s.last_ids = [e.id for e in events]
+        s.remember([e.id for e in events])
         if not events:
             text = f"{label.capitalize()} {what} нет." if what else f"{label.capitalize()} ничего не запланировано."
             return Reply(text, intent="list")
 
+        dated = [e for e in events if e.date is not None]
+        undated = [e for e in events if e.date is None]
         single_day = period.start == period.end
         lines, spoken = [], []
         current_day = None
-        for e in events[:MAX_SHOWN]:
+        for e in dated[:MAX_SHOWN]:
             if not single_day and e.date != current_day:
                 current_day = e.date
                 lines.append(f"\n{WEEKDAYS_NOM[e.date.weekday()].capitalize()}, {human_date(e.date, today, with_weekday=False)}:")
             t = human_time(e.time) if e.time else "в течение дня"
             lines.append(f"• {t} — {TYPE_NAMES[e.type]} «{e.title}»" + (" ✓" if e.done else ""))
-        for e in events[:MAX_SPOKEN]:
-            day = "" if single_day else human_date(e.date, today) + " "
+        if undated:
+            lines.append("\nБез срока:")
+            lines += [f"• {TYPE_NAMES[e.type]} «{e.title}»" for e in undated[:MAX_SHOWN]]
+        for e in (dated + undated)[:MAX_SPOKEN]:
+            day = "" if single_day or e.date is None else human_date(e.date, today) + " "
             t = f"в {human_time(e.time)}" if e.time else ""
             spoken.append(f"{day}{t} {e.title}".strip())
 
         header = f"{label.capitalize()} у вас {count_phrase(events)}:"
-        rest = len(events) - MAX_SHOWN
+        rest = len(dated) - MAX_SHOWN
         text = header + "\n" + "\n".join(lines).strip("\n") + (f"\n…и ещё {rest}." if rest > 0 else "")
         speech = header.rstrip(":") + ". " + "; ".join(spoken)
         if len(events) > MAX_SPOKEN:
             speech += f". И ещё {len(events) - MAX_SPOKEN} — смотрите на экране."
         return Reply(text, speech=speech, events=events[:MAX_SHOWN], intent="list")
+
+    def _query_is_meaningful(self, user_id: str, query: str, today: date) -> bool:
+        """Остаток фразы похож хоть на одну запись? Иначе это шум распознавания
+        или опечатка («что у меняй завтра») — фильтровать по нему нельзя."""
+        return bool(search(self.storage.all(user_id), query, today, limit=1))
 
     # ---------------------------------------------------------------- search
 
@@ -380,12 +424,13 @@ class Assistant:
             if cmd.period or cmd.event_type:
                 return self._list(user_id, s, cmd, now)
             return Reply("Что найти? Назовите, о чём была задача или встреча.", intent="search")
+        s.last = DialogContext(Intent.SEARCH, cmd.event_type, cmd.period, cmd.query, cmd.tense)
         hits = self._find(user_id, cmd, now)
         if not hits:
-            s.last_ids = []
+            s.focus = []
             return Reply(f"Не нашёл записей по запросу «{cmd.query}». Попробуйте сказать иначе.", intent="search")
         found = [h.event for h in hits]
-        s.last_ids = [e.id for e in found]
+        s.remember([e.id for e in found[:10]])
         top = found[0]
         if cmd.tense == "past":
             past = [e for e in found if e.date and e.date <= today]
@@ -399,8 +444,8 @@ class Assistant:
         text = head + ("\n" + "\n".join(lines) if len(found) > 1 else "")
         if len(found) > 10:
             text += f"\n…и ещё {len(found) - 10}."
-        if len(found) == 1:
-            s.last_ids = [top.id]
+        if len(found) == 1 or cmd.tense == "past":
+            s.remember([top.id])
         return Reply(text, speech=head, events=found[:10], intent="search")
 
     # ------------------------------------------------ reschedule / complete / delete
@@ -420,16 +465,19 @@ class Assistant:
                 hits = upcoming
             candidates = [h.event for h in hits]
             # удаление необратимо — при нескольких совпадениях всегда спрашиваем
-            if cmd.intent is not Intent.DELETE:
-                # запись, о которой только что говорили, важнее остальных совпадений
-                recent = [e for e in candidates if e.id in s.last_ids]
-                if len(recent) == 1:
-                    candidates = recent
+            if cmd.intent is not Intent.DELETE and len(candidates) > 1:
+                # запись, о которой недавно говорили, важнее остальных совпадений:
+                # смотрим во всю накопленную историю, а не только в последний ответ
+                recent = [e for e in candidates if s.recency(e.id) is not None]
+                if recent:
+                    candidates = [min(recent, key=lambda e: s.recency(e.id))]
                 # явный лидер по релевантности — без лишнего вопроса «какую?»
-                elif len(hits) > 1 and hits[0].score >= 1.3 * hits[1].score:
+                elif hits[0].score >= 1.3 * hits[1].score:
                     candidates = [hits[0].event]
-        elif s.last_ids:
-            candidates = [e for e in (self.storage.get(user_id, i) for i in s.last_ids[:5]) if e]
+        else:
+            # «её», «эту встречу»: последний ответ, а если он пуст — последняя упомянутая запись
+            ids = s.focus[:5] or s.history[:1]
+            candidates = [e for e in (self.storage.get(user_id, i) for i in ids) if e]
 
         verb = {"reschedule": "перенести", "complete": "отметить выполненной", "delete": "удалить",
                 "rename": "переименовать"}[action]
@@ -440,13 +488,13 @@ class Assistant:
         if len(candidates) > 1:
             shown = candidates[:5]
             s.pending = Pending("choose", action=action, candidates=shown, cmd=cmd)
-            s.last_ids = [e.id for e in shown]
+            s.remember([e.id for e in shown])
             lines = [f"{k + 1}) {describe(e, now.date())}" for k, e in enumerate(shown)]
             return Reply(f"Нашёл несколько записей. Какую {verb}?\n" + "\n".join(lines),
                          speech=f"Нашёл несколько записей. Какую {verb}? " + "; ".join(lines),
                          events=shown, awaiting="choose", intent=action)
         target = candidates[0]
-        s.last_ids = [target.id]
+        s.remember([target.id])
         return self._do_action(user_id, s, action, target, cmd, now)
 
     def _do_action(self, user_id: str, s: Session, action: str, target: Event, cmd: ParsedCommand | None, now: datetime) -> Reply:
@@ -474,7 +522,7 @@ class Assistant:
         old = stored.title
         stored.title = new_title[:1].upper() + new_title[1:]
         self.storage.update(stored)
-        s.last_ids = [stored.id]
+        s.remember([stored.id])
         return Reply(f"Переименовал: «{old}» → «{stored.title}».", events=[stored], intent="rename")
 
     def _apply_reschedule(self, user_id: str, s: Session, target: Event, new_date: date | None, new_time: time | None, now: datetime) -> Reply:
@@ -484,7 +532,7 @@ class Assistant:
         if new_time:
             stored.time = new_time
         self.storage.update(stored)
-        s.last_ids = [stored.id]
+        s.remember([stored.id])
         text = f"Перенёс {TYPE_ACC[stored.type]} «{stored.title}», теперь — {human_when(stored, now.date())}."
         if stored.type is EventType.MEETING and stored.time:
             clashes = self.storage.conflicts(user_id, stored.date, stored.time, stored.duration_min, exclude_id=stored.id)

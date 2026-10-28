@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher, get_close_matches
 
-from ..models import EventType, Intent, ParsedCommand
+from ..models import EventType, Intent, ParsedCommand, Period
 from . import dates
 from .text import Token, _morph, join_tokens, lemma, tokenize  # noqa: F401 (lemma реэкспортируется)
 
@@ -106,9 +107,43 @@ def build_title(tokens: list[Token]) -> str | None:
     return title[:1].upper() + title[1:] if title else None
 
 
+def _is_stopword(word: str) -> bool:
+    """Служебное слово — в том числе с опечаткой распознавания («меняй» вместо «меня»)."""
+    if word in SEARCH_STOP:
+        return True
+    if len(word) < 4:
+        return False
+    return any(len(s) >= 4 and abs(len(s) - len(word)) <= 1 and SequenceMatcher(None, s, word).ratio() >= 0.85
+               for s in SEARCH_STOP)
+
+
 def search_query(tokens: list[Token]) -> str:
-    words = [t.orig for t in tokens if not t.used and t.norm[0].isalnum() and t.norm not in SEARCH_STOP]
+    words = [t.orig for t in tokens if not t.used and t.norm[0].isalnum() and not _is_stopword(t.norm)]
     return " ".join(words).strip()
+
+
+# Ключевые слова, опечатки в которых исправляем до разбора: «напомин», «встрчу», «завтро», «найд».
+TRIGGER_VOCAB = sorted({
+    "напомни", "напомните", "напомнить", "найди", "найдите", "поищи", "перенеси", "перенести", "удали", "удалить",
+    "покажи", "добавь", "поставь", "запланируй", "назначь", "создай", "запиши", "переименуй", "отметь",
+    "встреча", "встречу", "встречи", "встреч", "встрече", "созвон", "совещание", "планёрка", "планерку", "планерка",
+    "задача", "задачу", "задачи", "задач", "напоминание", "напоминания",
+    "сегодня", "завтра", "послезавтра", "вчера", "неделе", "неделю", "следующей", "следующую", "выходных",
+    "понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье",
+    "запланировано", "расписание", "планы", "выполненной", "выполненным", "когда",
+})
+
+
+def _fix_typos(tokens: list[Token]) -> None:
+    """Исправить опечатку в ключевом слове, если слова нет в словаре pymorphy."""
+    for t in tokens:
+        w = t.norm
+        if len(w) < 4 or not w.isalpha() or w in TRIGGER_VOCAB or _morph.word_is_known(w):
+            continue
+        match = get_close_matches(w, TRIGGER_VOCAB, n=1, cutoff=0.8)
+        if match:
+            t.norm = match[0]
+            t.orig = match[0].capitalize() if t.orig[:1].isupper() else match[0]
 
 
 def detect_intent(norms: list[str], lems: list[str], raw: str) -> Intent:
@@ -179,11 +214,16 @@ def parse_rename(text: str) -> ParsedCommand | None:
     return cmd
 
 
-def parse(text: str, now: datetime) -> ParsedCommand:
+FOLLOW_UP_STARTS = {"а", "и", "ну", "тогда", "также", "ещё", "еще"}
+
+
+def parse(text: str, now: datetime, context=None) -> ParsedCommand:
+    """context — app.memory.DialogContext прошлого запроса (или None)."""
     renamed = parse_rename(text)
     if renamed:
         return renamed
     tokens = tokenize(text)
+    _fix_typos(tokens)
     norms = [t.norm for t in tokens]
     lems = [lemma(t.orig) for t in tokens]
     intent = detect_intent(norms, lems, text)
@@ -228,8 +268,41 @@ def parse(text: str, now: datetime) -> ParsedCommand:
         if cmd.query and cmd.event_type and lemma(cmd.query) in (TASK_LEMMAS | MEETING_LEMMAS):
             cmd.query = None
         if intent in (Intent.DELETE, Intent.COMPLETE, Intent.RESCHEDULE):
-            content_words = [t.norm for t in tokens if not t.used and t.norm[0].isalnum() and t.norm not in SEARCH_STOP]
+            content_words = [t.norm for t in tokens if not t.used and t.norm[0].isalnum() and not _is_stopword(t.norm)]
             cmd.refers_to_last = bool(words & PRONOUN_REFS) and not content_words
             if not content_words and not cmd.query:
                 cmd.refers_to_last = True
-    return cmd
+    return _apply_context(cmd, norms, text, context)
+
+
+def _apply_context(cmd: ParsedCommand, norms: list[str], text: str, context) -> ParsedCommand:
+    """Короткая реплика продолжает прошлый запрос списка или поиска.
+
+    «Что у меня сегодня?» → «а на завтра?»     — тот же список, другой период;
+    «Какие встречи на неделе?» → «а задачи?»   — тот же период, другой тип;
+    «Когда была встреча с Иваном?» → «а с Марией?» — тот же поиск, другой человек.
+    """
+    if context is None or context.intent not in (Intent.LIST, Intent.SEARCH):
+        return cmd
+    words = [w for w in norms if w[0].isalnum()]
+    follow_up = bool(words) and words[0] in FOLLOW_UP_STARTS
+    if cmd.intent not in (Intent.UNKNOWN, Intent.LIST, Intent.SEARCH) or len(words) > 6:
+        return cmd
+    if cmd.intent is not Intent.UNKNOWN and not follow_up:
+        return cmd
+    new_period = cmd.period or (Period(cmd.date, cmd.date, "") if cmd.date else None)
+    query = cmd.query
+    if cmd.intent is Intent.UNKNOWN and not query:
+        # «а с Марией» — без предлогов в начале остатка уже не осталось
+        query = " ".join(w for w in words if w not in FOLLOW_UP_STARTS and not _is_stopword(w)) or None
+    if not (new_period or cmd.event_type or query):
+        return cmd
+    merged = ParsedCommand(intent=context.intent, source=cmd.source, tense=cmd.tense or context.tense)
+    merged.event_type = cmd.event_type or (context.event_type if not query or context.intent is Intent.SEARCH else None)
+    merged.period = new_period or context.period
+    merged.date = cmd.date
+    merged.query = query if query else (context.query if not cmd.event_type else None)
+    if context.intent is Intent.SEARCH and not query and not new_period:
+        merged.query = context.query
+    merged.extras = {**cmd.extras, "from_context": True}
+    return merged

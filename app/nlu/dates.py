@@ -26,11 +26,17 @@ MONTHS = {
     "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
     "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
 }
+# «что у меня?» без периода и «в ближайшие дни» — сегодня и ещё 6 дней
+UPCOMING_DAYS = 7
+UPCOMING_WORDS = {"ближайшие", "ближайшую", "ближайший", "ближайшее", "предстоящие", "следующие", "грядущие"}
+SPAN_UNITS = {"день": 1, "дня": 1, "дней": 1, "дни": 1, "неделю": 7, "недели": 7, "недель": 7, "неделя": 7,
+              "месяц": 30, "месяца": 30, "месяцев": 30}
+
 WEEKDAYS_ACC = ["понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье"]
 RELATIVE_DAYS = {"позавчера": -2, "вчера": -1, "сегодня": 0, "сегодняшний": 0, "завтра": 1, "послезавтра": 2}
 PREPOSITIONS = {"в", "во", "на", "к", "ко", "до", "с", "со", "за", "по", "около", "примерно", "где-то"}
 NEXT_WORDS = {"следующий", "следующую", "следующее", "следующей", "следующего", "будущий", "будущую", "будущей", "следующем", "будущем"}
-THIS_WORDS = {"этот", "эту", "это", "этой", "текущий", "текущую", "текущей", "ближайший", "ближайшую", "ближайшее", "этом", "текущем"}
+THIS_WORDS = {"этот", "эту", "это", "этой", "текущий", "текущую", "текущей", "этом", "текущем"}
 PREV_WORDS = {"прошлый", "прошлую", "прошлое", "прошлой", "прошедший", "прошедшую", "прошедшей", "прошлом"}
 EVERY_WORDS = {"каждый", "каждую", "каждое", "каждые"}
 WEEK_WORDS = {"неделя", "неделю", "недели", "неделе"}
@@ -235,6 +241,23 @@ def extract(tokens: list[Token], now: datetime, prefer_past: bool = False, futur
             i += 1
             continue
 
+        # --- «в ближайшие дни», «на ближайшие 3 дня», «ближайшую неделю», «следующие две недели»
+        if w in UPCOMING_WORDS:
+            j, amount = i + 1, 1
+            if j < len(n) and n[j].isdigit():
+                amount, j = int(n[j]), j + 1
+            elif j < len(n) and n[j] in ("пару", "пара"):
+                amount, j = 2, j + 1
+            if j < len(n) and (n[j] in SPAN_UNITS or n[j] == "время"):
+                days = UPCOMING_DAYS if n[j] in ("время", "дни") and amount == 1 else amount * SPAN_UNITS.get(n[j], 1)
+                days = max(1, min(days, 366))
+                info.period = Period(today, today + timedelta(days=days - 1),
+                                     "в ближайшие дни" if n[j] in ("время", "дни") and amount == 1
+                                     else f"в ближайшие {days} {'день' if days == 1 else 'дня' if 2 <= days % 10 <= 4 and not 12 <= days % 100 <= 14 else 'дней'}")
+                _consume(tokens, i, j + 1)
+                i = j + 1
+                continue
+
         # --- неделя / месяц / выходные как период
         if w in WEEK_WORDS or w in MONTH_WORDS:
             modifier = prev if prev in NEXT_WORDS | THIS_WORDS | PREV_WORDS else None
@@ -274,12 +297,6 @@ def extract(tokens: list[Token], now: datetime, prefer_past: bool = False, futur
             _consume(tokens, i - 1 if prev in NEXT_WORDS | THIS_WORDS else i, i + 1)
             i += 1
             continue
-        if w in ("ближайшие", "ближайшее", "предстоящие") and nxt in ("дни", "время"):
-            info.period = Period(today, today + timedelta(days=6), "в ближайшие дни")
-            _consume(tokens, i, i + 2)
-            i += 2
-            continue
-
         # --- день недели: «в пятницу», «в следующий вторник», «до четверга»
         if w in WEEKDAYS:
             modifier = None

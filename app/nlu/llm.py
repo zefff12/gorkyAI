@@ -59,8 +59,17 @@ def _calendar(now: datetime) -> str:
     return "\n".join(lines)
 
 
-def _system(now: datetime, last_title: str | None) -> str:
+def _history_block(history: list[dict] | None) -> str:
+    """Последние реплики диалога — чтобы модель понимала «её», «а на завтра?» и т.п."""
+    if not history:
+        return ""
+    lines = [f"{'Пользователь' if m['role'] == 'user' else 'Ассистент'}: {m['text'][:300]}" for m in history]
+    return "\nНедавний диалог (контекст, не выполняй его повторно):\n" + "\n".join(lines)
+
+
+def _system(now: datetime, last_title: str | None, history: list[dict] | None = None) -> str:
     ctx = f"Последняя запись, о которой шла речь: «{last_title}»." if last_title else "Контекста предыдущей записи нет."
+    ctx += _history_block(history)
     return (
         "Ты — модуль понимания речи голосового ассистента задач и встреч. Пользователь говорит по-русски, "
         "текст получен распознаванием речи и может содержать ошибки. Разбери запрос и вызови parse_command.\n"
@@ -93,12 +102,13 @@ class LLMParser:
         import anthropic
         self.client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, timeout=config.LLM_TIMEOUT_S, max_retries=1)
 
-    def parse(self, text: str, now: datetime, last_title: str | None = None) -> ParsedCommand | None:
+    def parse(self, text: str, now: datetime, last_title: str | None = None,
+              history: list[dict] | None = None) -> ParsedCommand | None:
         try:
             resp = self.client.messages.create(
                 model=config.LLM_MODEL,
                 max_tokens=600,
-                system=_system(now, last_title),
+                system=_system(now, last_title, history),
                 tools=[TOOL],
                 tool_choice={"type": "tool", "name": "parse_command"},
                 messages=[{"role": "user", "content": text}],
