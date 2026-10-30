@@ -76,7 +76,10 @@ def _type_from_lemmas(lems: set[str]) -> EventType | None:
 
 
 def _to_nominative(word: str) -> str:
-    """«встречу» → «встреча» (для названия, начинающегося с существительного)."""
+    """«встречу» → «встреча», «планёрку» → «планёрка». Только для слов-типов записи:
+    иначе «Йога» превратилась бы в «Йог» (омоним в винительном падеже)."""
+    if lemma(word) not in MEETING_LEMMAS | TASK_LEMMAS | {"напоминание"}:
+        return word
     for p in _morph.parse(word):
         if "NOUN" in p.tag and "accs" in p.tag and p.score > 0.1:
             nom = p.inflect({"nomn"})
@@ -237,6 +240,17 @@ def parse(text: str, now: datetime, context=None) -> ParsedCommand:
         tense = "future"
 
     info = dates.extract(tokens, now, prefer_past=tense == "past", future_bias=intent is Intent.CREATE)
+    first_word = next((n for n in norms if n[:1].isalnum()), "")
+    if (intent is Intent.UNKNOWN and info.found and not text.rstrip().endswith("?")
+            and not (context is not None and first_word in FOLLOW_UP_STARTS)):
+        # «Йога каждый понедельник в 8», «День рождения Маши в субботу в 19» — утверждение
+        # с датой или временем без глагола: это новая запись
+        candidate = tokenize(text)
+        _fix_typos(candidate)
+        candidate_info = dates.extract(candidate, now, prefer_past=False, future_bias=True)
+        # только если после даты остаётся название; «в 12» — это ответ на уточнение, а не запись
+        if build_title([Token(t.orig, t.norm, t.used) for t in candidate]):
+            intent, tokens, info = Intent.CREATE, candidate, candidate_info
     if intent is Intent.CREATE and info.weekday_is_today and info.time and info.time <= now.time():
         # «в четверг в 11», сказанное в четверг в 11:20, — это следующий четверг
         info.date += timedelta(days=7)

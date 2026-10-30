@@ -3,65 +3,219 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Голосовой ассистент</title>
-  <link rel="stylesheet" href="/static/style.css?v=9">
+  <title>Ассистент задач и встреч</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
-  <div class="layout">
-    <main class="chat">
-      <header class="top">
-        <div>
-          <h1>Ассистент задач и встреч</h1>
-          <p class="sub" id="status">Нажмите на микрофон или напишите запрос</p>
+  <div class="app">
+    <!-- ================= боковое меню ================= -->
+    <aside class="sidebar">
+      <a class="brand" href="#/">
+        <svg aria-hidden="true"><use href="/static/icons.svg#logo"/></svg>
+        <b>Ассистент<br>задач и встреч</b>
+      </a>
+      <nav class="nav" aria-label="Разделы">
+        <a href="#/" data-view="home"><svg class="icon"><use href="/static/icons.svg#home"/></svg>Главная</a>
+        <a href="#/tasks" data-view="tasks"><svg class="icon"><use href="/static/icons.svg#tasks"/></svg>Мои задачи</a>
+        <a href="#/calendar" data-view="calendar"><svg class="icon"><use href="/static/icons.svg#calendar"/></svg>Календарь</a>
+        <a href="#/meetings" data-view="meetings"><svg class="icon"><use href="/static/icons.svg#users"/></svg>Встречи</a>
+        <a href="#/reminders" data-view="reminders"><svg class="icon"><use href="/static/icons.svg#bell"/></svg>Напоминания<span class="badge" id="remindBadge" hidden></span></a>
+        <a href="#/history" data-view="history"><svg class="icon"><use href="/static/icons.svg#clock"/></svg>История</a>
+      </nav>
+      <div class="promo"><img class="blend" src="/static/img/promo.webp" alt="Планируй легче с голосовым ассистентом" width="420" height="581" loading="lazy"></div>
+      <div class="profile">
+        <button class="avatar" id="profileAvatar" aria-label="Меню профиля">?</button>
+        <div class="who"><b id="profileName">Гость</b><span id="profileRole">Без регистрации</span></div>
+        <button class="icon-btn" id="profileGear" aria-label="Настройки"><svg class="icon"><use href="/static/icons.svg#settings"/></svg></button>
+        <div class="menu" id="profileMenu" hidden></div>
+      </div>
+    </aside>
+
+    <!-- ================= основная часть ================= -->
+    <div class="main">
+      <header class="topbar">
+        <div class="search">
+          <svg class="icon"><use href="/static/icons.svg#search"/></svg>
+          <input id="search" type="search" placeholder="Найти задачу или встречу…" autocomplete="off" aria-label="Поиск по задачам и встречам">
+          <kbd>Ctrl + K</kbd>
+          <div class="menu search-results" id="searchResults" hidden></div>
         </div>
-        <div class="controls">
-          <label class="toggle" title="Озвучивать ответы">
-            <input type="checkbox" id="speakToggle" checked> Озвучивать
-          </label>
-          <label class="user" title="Ваш личный ID: записи видны только по нему. Чтобы открыть свой список на другом устройстве, введите там этот же ID">
-            👤 <input id="userId" maxlength="40" spellcheck="false">
-          </label>
-        </div>
+        <div class="spacer"></div>
+        <button class="round-btn bell" id="bell" aria-label="Напоминания на сегодня"><svg class="icon"><use href="/static/icons.svg#bell"/></svg><span class="dot" id="bellDot" hidden></span></button>
+        <button class="avatar top-avatar" id="topAvatar" aria-label="Профиль">?</button>
+        <div class="menu" id="bellMenu" hidden></div>
       </header>
 
-      <section id="log" class="log" aria-live="polite"></section>
+      <!-- ---------- Главная ---------- -->
+      <section class="view" id="view-home">
+        <div class="home">
+          <div class="col">
+            <div class="hero">
+              <div>
+                <div class="eyebrow">Твой личный ассистент</div>
+                <h1>Твой день.<br><span class="mark">Под твоим контролем.</span></h1>
+                <p>Создавай задачи, встречи и напоминания голосом или текстом. Я помогу всё организовать.</p>
+              </div>
+              <img class="hero-art blend" src="/static/img/hero.webp" alt="" width="640" height="566">
+            </div>
 
-      <div class="chips" id="chips">
-        <button>Что у меня на этой неделе?</button>
-        <button>Напомни завтра в 10 утра позвонить Ивану</button>
-        <button>Добавь встречу с командой в пятницу в 15:00</button>
-        <button>Поставь встречу с Иваном завтра</button>
-        <button>Найди задачу про презентацию</button>
-        <button>Когда у меня была встреча с Иваном?</button>
-        <button>А перенеси её на понедельник</button>
-        <button>Переименуй её в Созвон с Иваном</button>
-        <button>Каждый понедельник в 10 планёрка</button>
-        <button>Найди слайды для выступления</button>
-      </div>
+            <div class="card assistant">
+              <div class="dialog" id="log" aria-live="polite"></div>
+              <form class="composer" id="form" autocomplete="off">
+                <button type="button" class="mic" id="mic" aria-label="Сказать голосом (Ctrl+Пробел)"><svg class="icon"><use href="/static/icons.svg#mic"/></svg></button>
+                <input id="input" placeholder="Например: напомни мне завтра в 10 утра позвонить Ивану" maxlength="1000" aria-label="Запрос ассистенту">
+                <button type="button" class="stop" id="stop" hidden aria-label="Остановить озвучку (Esc)"><svg class="icon"><use href="/static/icons.svg#stop"/></svg>Стоп</button>
+                <button type="submit" class="send" aria-label="Отправить"><svg class="icon"><use href="/static/icons.svg#arrow-right"/></svg></button>
+              </form>
+              <div class="status" id="status"></div>
+              <div class="chips" id="chips">
+                <button class="chip">Что у меня на этой неделе?</button>
+                <button class="chip">Добавь встречу в пятницу в 15:00</button>
+                <button class="chip">Поставь напоминание</button>
+                <button class="chip">Найди задачу про презентацию</button>
+                <button class="chip">Когда у меня встреча с Иваном?</button>
+                <button class="chip">Переименуй её в Созвон с Иваном</button>
+              </div>
+            </div>
 
-      <form id="form" class="composer" autocomplete="off">
-        <button type="button" id="mic" class="mic" aria-label="Говорить">
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
-        </button>
-        <input id="input" placeholder="Например: что у меня завтра?" maxlength="1000">
-        <button type="button" id="stop" class="stop" hidden title="Остановить озвучку (Esc)" aria-label="Остановить озвучку">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
-          Стоп
-        </button>
-        <button type="submit" class="send">Отправить</button>
-      </form>
-    </main>
+            <div class="actions">
+              <button class="action violet" data-prefill="Поставь задачу ">
+                <img src="/static/img/card-task.webp" alt="" width="220" height="205">
+                <div><b>Создать<br>задачу</b><span>Добавить задачу с голосом или текстом</span></div>
+                <span class="round-btn go"><svg class="icon sm"><use href="/static/icons.svg#chevron-right"/></svg></span>
+              </button>
+              <button class="action" data-prefill="Добавь встречу ">
+                <img src="/static/img/card-meeting.webp" alt="" width="220" height="205">
+                <div><b>Запланировать<br>встречу</b><span>Указать дату, время и участников</span></div>
+                <span class="round-btn go"><svg class="icon sm"><use href="/static/icons.svg#chevron-right"/></svg></span>
+              </button>
+              <button class="action lime" data-prefill="Напомни ">
+                <img src="/static/img/card-reminder.webp" alt="" width="220" height="205">
+                <div><b>Поставить<br>напоминание</b><span>Не пропусти важное</span></div>
+                <span class="round-btn go"><svg class="icon sm"><use href="/static/icons.svg#chevron-right"/></svg></span>
+              </button>
+              <button class="action" data-go="#/calendar">
+                <img src="/static/img/card-calendar.webp" alt="" width="220" height="205">
+                <div><b>Открыть<br>календарь</b><span>Все события в одном месте</span></div>
+                <span class="round-btn go"><svg class="icon sm"><use href="/static/icons.svg#chevron-right"/></svg></span>
+              </button>
+            </div>
 
-    <aside class="agenda">
-      <div class="agenda-head">
-        <h2>Ближайшие 7 дней</h2>
-        <button id="reset" class="link" title="Удалить все мои записи">очистить</button>
-      </div>
-      <div id="agenda"></div>
-      <button id="demoData" class="link demo" hidden>Загрузить тестовые данные из задания (1000 записей)</button>
-      <p class="meta" id="meta"></p>
-    </aside>
+            <div class="bottom">
+              <div class="card panel">
+                <div class="card-head"><h2>Сегодня<span class="sub" id="todayLabel"></span></h2><a class="link-more" href="#/tasks?preset=today">Смотреть все →</a></div>
+                <div class="rows" id="todayList"></div>
+              </div>
+              <div class="card panel">
+                <div class="card-head"><h2>Ближайшие встречи</h2><a class="link-more" href="#/meetings">Смотреть все →</a></div>
+                <div class="rows" id="meetList"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col side">
+            <div class="card week">
+              <div class="card-head"><h2>Ближайшие 7 дней</h2><a class="link-more" href="#/calendar">Открыть календарь →</a></div>
+              <div class="days" id="days"></div>
+              <div class="agenda-list" id="agenda"></div>
+              <a class="btn" href="#/tasks"><svg class="icon sm"><use href="/static/icons.svg#calendar"/></svg>Посмотреть все события</a>
+            </div>
+
+            <div class="card popular">
+              <div class="card-head"><h2>Популярные команды</h2></div>
+              <ol id="popular">
+                <li><button><span class="n">1</span>Что у меня на этой неделе?</button></li>
+                <li><button><span class="n">2</span>Добавь встречу в пятницу в 15:00</button></li>
+                <li><button><span class="n">3</span>Поставь напоминание завтра</button></li>
+                <li><button><span class="n">4</span>Найди задачу про презентацию</button></li>
+                <li><button><span class="n">5</span>Когда у меня встреча с Иваном?</button></li>
+              </ol>
+              <svg class="star" aria-hidden="true"><use href="/static/icons.svg#star"/></svg>
+            </div>
+
+            <div class="card features">
+              <div class="card-head" style="margin-bottom:4px"><h2>Полезные возможности</h2></div>
+              <button class="feature" data-feature="voice">
+                <span class="ico"><svg class="icon"><use href="/static/icons.svg#mic"/></svg></span>
+                <span><b>Управление голосом</b><small>Создавай, переноси и удаляй задачи</small></span>
+                <svg class="icon sm"><use href="/static/icons.svg#chevron-right"/></svg>
+              </button>
+              <button class="feature" data-feature="search">
+                <span class="ico"><svg class="icon"><use href="/static/icons.svg#search"/></svg></span>
+                <span><b>Умный поиск</b><small>Найди любую задачу или встречу</small></span>
+                <svg class="icon sm"><use href="/static/icons.svg#chevron-right"/></svg>
+              </button>
+              <button class="feature" data-feature="calendar">
+                <span class="ico"><svg class="icon"><use href="/static/icons.svg#calendar"/></svg></span>
+                <span><b>Календарь событий</b><small>Все события в одном месте</small></span>
+                <svg class="icon sm"><use href="/static/icons.svg#chevron-right"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- Мои задачи / Встречи / Напоминания: общий список с фильтрами ---------- -->
+      <section class="view" id="view-list" hidden>
+        <div class="page-head">
+          <div><h1 id="listTitle">Мои задачи</h1><p id="listSub"></p></div>
+          <button class="btn primary" id="listAdd"><svg class="icon sm"><use href="/static/icons.svg#mic"/></svg>Добавить голосом</button>
+        </div>
+        <div class="card filters">
+          <div class="seg" id="presets"></div>
+          <div class="range">
+            <span>с</span><input type="date" id="from" aria-label="Начало периода">
+            <span>по</span><input type="date" id="to" aria-label="Конец периода">
+          </div>
+          <select id="typeFilter" aria-label="Тип записей">
+            <option value="">Все типы</option>
+            <option value="task">Задачи</option>
+            <option value="reminder">Напоминания</option>
+            <option value="meeting">Встречи</option>
+          </select>
+          <select id="statusFilter" aria-label="Статус">
+            <option value="all">Любой статус</option>
+            <option value="active">Невыполненные</option>
+            <option value="done">Выполненные</option>
+            <option value="overdue">Просроченные</option>
+          </select>
+          <input type="search" id="listQuery" placeholder="Поиск по названию или смыслу" aria-label="Поиск в списке">
+        </div>
+        <p class="summary" id="listSummary"></p>
+        <div id="listBody"></div>
+      </section>
+
+      <!-- ---------- Календарь ---------- -->
+      <section class="view" id="view-calendar" hidden>
+        <div class="page-head"><div><h1>Календарь</h1><p>Выберите день, чтобы увидеть его события</p></div></div>
+        <div class="cal-wrap">
+          <div class="card cal">
+            <div class="cal-head">
+              <h2 id="calTitle"></h2>
+              <button class="btn" id="calToday">Сегодня</button>
+              <button class="round-btn" id="calPrev" aria-label="Предыдущий месяц"><svg class="icon"><use href="/static/icons.svg#chevron-left"/></svg></button>
+              <button class="round-btn" id="calNext" aria-label="Следующий месяц"><svg class="icon"><use href="/static/icons.svg#chevron-right"/></svg></button>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+          </div>
+          <div class="card panel">
+            <div class="card-head"><h2 id="calDayTitle">День</h2></div>
+            <div class="rows" id="calDayList"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- История ---------- -->
+      <section class="view" id="view-history" hidden>
+        <div class="page-head"><div><h1>История</h1><p>Весь ваш разговор с ассистентом</p></div></div>
+        <div class="card history" id="historyBody"></div>
+      </section>
+    </div>
   </div>
-  <script src="/static/app.js?v=9"></script>
+
+  <script src="/static/app.js?v=15"></script>
 </body>
 </html>

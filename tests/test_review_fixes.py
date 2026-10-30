@@ -226,6 +226,23 @@ def test_slides_variants(seeded_bot, text):
     assert r.events and any("презентац" in e.title.lower() for e in r.events), (text, r.text)
 
 
+@pytest.mark.parametrize("text, title, recurring", [
+    ("Йога каждый понедельник в 8 утра", "Йога", True),
+    ("День рождения Маши в субботу в 19", "День рождения Маши", False),
+    ("Стоматолог завтра в 9:30", "Стоматолог", False),
+])
+def test_statement_with_date_creates_record(bot, text, title, recurring):
+    r = say(bot, text)
+    [ev] = bot.storage.all(U)
+    assert ev.title == title and (ev.recurrence is not None) == recurring and ev.time is not None, r.text
+
+
+def test_follow_up_with_date_is_not_a_new_record(bot):
+    say(bot, "Что у меня сегодня?")
+    r = say(bot, "а завтра")
+    assert r.intent == "list" and bot.storage.all(U) == []
+
+
 def test_typo_in_query_does_not_filter_out_results(bot):
     """Скриншот проверяющего: «что у меняй завтра?» отвечало «ничего не запланировано»."""
     _seed_week(bot)

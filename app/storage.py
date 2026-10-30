@@ -48,6 +48,22 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages (user_id, id);
+
+-- Аккаунты. Данные аккаунта лежат в тех же таблицах под user_id = 'acc-<id>'.
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    email         TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+-- Сессии входа: хранится только SHA-256 токена из cookie.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL
+);
 """
 
 
@@ -284,6 +300,81 @@ class Storage:
         if isinstance(data.get("dialog"), dict):
             self.save_dialog(user_id, _remap_ids(data["dialog"], id_map))
         return {"events": len(events), "messages": len(messages)}
+
+    def query(self, user_id: str, start: date | None = None, end: date | None = None,
+              types: set[EventType] | None = None, status: str = "all", undated: bool = True,
+              today: date | None = None, limit: int = 2000) -> list[Event]:
+        """Все записи пользователя с фильтрами — для страниц «Мои задачи», «Встречи» и т.д.
+
+        start/end — период (повторяющиеся записи разворачиваются в вхождения);
+        без периода возвращаются сами записи. status: all | active | done | overdue.
+        """
+        if start or end:
+            start = start or date(1970, 1, 1)
+            end = end or date(2100, 12, 31)
+            if (end - start).days > 3660:
+                end = start + timedelta(days=3660)
+            events = self.in_range(user_id, start, end, include_undated=False)
+            if undated:
+                events += [e for e in self.all(user_id) if e.date is None]
+        else:
+            events = self.all(user_id)
+            if not undated:
+                events = [e for e in events if e.date is not None]
+        if types:
+            events = [e for e in events if e.type in types]
+        today = today or date.today()
+        if status == "active":
+            events = [e for e in events if not e.done]
+        elif status == "done":
+            events = [e for e in events if e.done]
+        elif status == "overdue":
+            events = [e for e in events if not e.done and e.date is not None and e.date < today and not e.recurrence]
+        events.sort(key=lambda e: (e.date is None, e.date or date.max, e.time or time(0, 0), e.id))
+        return events[:limit]
+
+    # --- аккаунты --------------------------------------------------------------
+
+    def create_user(self, name: str, email: str, password_hash: str) -> int | None:
+        """id нового пользователя или None, если почта уже занята."""
+        try:
+            with self._conn() as c:
+                cur = c.execute("INSERT INTO users (name, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                                (name, email, password_hash, datetime.now().isoformat(timespec="seconds")))
+            return cur.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+    def user_by_email(self, email: str) -> sqlite3.Row | None:
+        with self._conn() as c:
+            return c.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+
+    def create_auth_session(self, token_hash: str, user_id: int, expires_at: datetime) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM auth_sessions WHERE expires_at < ?", (datetime.now().isoformat(),))
+            c.execute("INSERT INTO auth_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                      (token_hash, user_id, expires_at.isoformat(timespec="seconds")))
+
+    def user_by_session(self, token_hash: str) -> sqlite3.Row | None:
+        with self._conn() as c:
+            return c.execute(
+                "SELECT u.* FROM auth_sessions s JOIN users u ON u.id = s.user_id"
+                " WHERE s.token_hash = ? AND s.expires_at > ?",
+                (token_hash, datetime.now().isoformat()),
+            ).fetchone()
+
+    def delete_auth_session(self, token_hash: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,))
+
+    def reassign(self, from_user: str, to_user: str) -> int:
+        """Перенести записи, историю и контекст гостя в аккаунт (при регистрации)."""
+        with self._conn() as c:
+            cur = c.execute("UPDATE events SET user_id = ? WHERE user_id = ?", (to_user, from_user))
+            c.execute("UPDATE messages SET user_id = ? WHERE user_id = ?", (to_user, from_user))
+            c.execute("DELETE FROM dialog_state WHERE user_id = ?", (to_user,))
+            c.execute("UPDATE dialog_state SET user_id = ? WHERE user_id = ?", (to_user, from_user))
+        return cur.rowcount
 
     def conflicts(self, user_id: str, day: date, at: time, duration_min: int, exclude_id: int | None = None) -> list[Event]:
         """Встречи, пересекающиеся по времени с [at, at + duration)."""

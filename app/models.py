@@ -63,7 +63,13 @@ class Event:
             "done": self.done,
             "recurrence": self.recurrence.value if self.recurrence else None,
             "created_at": self.created_at.isoformat(timespec="seconds") if self.created_at else None,
+            "category": _category(self),
         }
+
+
+def _category(ev: "Event") -> str | None:
+    from .categories import category_of      # ленивый импорт: категории зависят от NLU
+    return category_of(ev)
 
 
 @dataclass

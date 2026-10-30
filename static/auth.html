@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Ассистент задач и встреч</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800;900&family=Caveat:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=15">
+</head>
+<body>
+  <main class="auth">
+    <span class="lang" title="Интерфейс на русском">RU</span>
+
+    <section class="auth-left">
+      <a class="brand" href="/login">
+        <svg aria-hidden="true"><use href="/static/icons.svg#logo"/></svg>
+        <b>Ассистент<br>задач и встреч</b>
+      </a>
+      <span class="scribble" aria-hidden="true">Всё важное<br>в одном<br>месте</span>
+      <div>
+        <h1 data-mode="login">Твои задачи.<br><span class="mark">Под контролем.</span></h1>
+        <h1 data-mode="register" hidden>Начни<br>работать проще.<br><span class="mark">Зарегистрируйся.</span></h1>
+        <p class="lead" data-mode="login">Умный помощник, который помогает планировать, организовывать встречи и ничего не забывать.</p>
+        <p class="lead" data-mode="register" hidden>Создавай задачи, планируй встречи и получай напоминания в одном помощнике.</p>
+        <ul class="perks">
+          <li><span class="ico"><svg class="icon"><use href="/static/icons.svg#calendar"/></svg></span>Планируй задачи<br>и встречи</li>
+          <li><span class="ico"><svg class="icon"><use href="/static/icons.svg#mic"/></svg></span>Управляй<br>голосом</li>
+          <li><span class="ico"><svg class="icon"><use href="/static/icons.svg#bell"/></svg></span>Получай напоминания</li>
+          <li><span class="ico"><svg class="icon"><use href="/static/icons.svg#sparkle"/></svg></span>Все инструменты<br>в одном месте</li>
+        </ul>
+      </div>
+      <img class="auth-art blend" data-mode="login" src="/static/img/auth-login.webp" alt="" width="465" height="598">
+      <img class="auth-art blend" data-mode="register" src="/static/img/auth-register.webp" alt="" width="450" height="528" hidden>
+    </section>
+
+    <section class="card form-card">
+      <!-- вход -->
+      <form id="loginForm" data-mode="login" novalidate>
+        <h2>Добро пожаловать!</h2>
+        <p class="hint">Войдите в свой аккаунт, чтобы продолжить работу с ассистентом</p>
+        <div class="form-error" hidden></div>
+        <label class="field">
+          <svg class="icon"><use href="/static/icons.svg#mail"/></svg>
+          <input name="email" type="email" autocomplete="email" placeholder="Электронная почта" required>
+        </label>
+        <label class="field">
+          <svg class="icon"><use href="/static/icons.svg#lock"/></svg>
+          <input name="password" type="password" autocomplete="current-password" placeholder="Пароль" required>
+          <button type="button" class="eye" aria-label="Показать пароль"><svg class="icon"><use href="/static/icons.svg#eye-off"/></svg></button>
+        </label>
+        <div class="line-opts">
+          <label><input type="checkbox" class="check" name="remember" checked> Запомнить меня</label>
+          <button type="button" class="linkish" data-open="forgot">Забыли пароль?</button>
+        </div>
+        <button class="submit" type="submit">Войти <span class="go"><svg class="icon"><use href="/static/icons.svg#arrow-right"/></svg></span></button>
+        <p class="alt">Нет аккаунта? <a href="/register">Зарегистрироваться</a></p>
+        <a class="guest" href="/" data-guest>Продолжить без регистрации →</a>
+      </form>
+
+      <!-- регистрация -->
+      <form id="registerForm" data-mode="register" novalidate hidden>
+        <a class="back" href="/login"><svg class="icon sm"><use href="/static/icons.svg#arrow-left"/></svg>Войти в аккаунт</a>
+        <h2>Создать аккаунт</h2>
+        <p class="hint">Зарегистрируйтесь, чтобы ваши задачи были доступны на любом устройстве</p>
+        <div class="form-error" hidden></div>
+        <div class="form-note" hidden></div>
+        <label class="field">
+          <svg class="icon"><use href="/static/icons.svg#user"/></svg>
+          <input name="name" autocomplete="name" placeholder="ФИО" required>
+          <span class="err" data-err="name"></span>
+        </label>
+        <label class="field">
+          <svg class="icon"><use href="/static/icons.svg#mail"/></svg>
+          <input name="email" type="email" autocomplete="email" placeholder="Электронная почта" required>
+          <span class="err" data-err="email"></span>
+        </label>
+        <label class="field">
+          <svg class="icon"><use href="/static/icons.svg#lock"/></svg>
+          <input name="password" type="password" autocomplete="new-password" placeholder="Пароль" required>
+          <button type="button" class="eye" aria-label="Показать пароль"><svg class="icon"><use href="/static/icons.svg#eye-off"/></svg></button>
+          <span class="err" data-err="password"></span>
+        </label>
+        <ul class="rules" aria-live="polite">
+          <li data-rule="len">Минимум 8 символов</li>
+          <li data-rule="digit">Цифры</li>
+          <li data-rule="case">Заглавные и строчные буквы</li>
+          <li data-rule="special">Специальный символ (!@#…)</li>
+        </ul>
+        <label class="field">
+          <svg class="icon"><use href="/static/icons.svg#lock"/></svg>
+          <input name="password2" type="password" autocomplete="new-password" placeholder="Повторите пароль" required>
+          <button type="button" class="eye" aria-label="Показать пароль"><svg class="icon"><use href="/static/icons.svg#eye-off"/></svg></button>
+          <span class="err" data-err="password2"></span>
+        </label>
+        <label class="terms">
+          <input type="checkbox" class="check" name="accept">
+          <span>Я принимаю условия <button type="button" class="linkish" data-open="terms">Пользовательского соглашения</button>
+            и <button type="button" class="linkish" data-open="privacy">Политики конфиденциальности</button></span>
+        </label>
+        <span class="err" data-err="accept" style="display:block;margin:-10px 0 12px;color:var(--danger);font-size:13px"></span>
+        <button class="submit" type="submit">Зарегистрироваться <span class="go"><svg class="icon"><use href="/static/icons.svg#arrow-right"/></svg></span></button>
+        <a class="guest" href="/" data-guest>Продолжить без регистрации →</a>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="forgot">
+    <h3>Восстановление пароля</h3>
+    <p>В прототипе нет отправки писем, поэтому сбросить пароль по почте нельзя. Зарегистрируйте новый аккаунт
+      или продолжите без регистрации — данные гостя перенесутся в аккаунт при регистрации.</p>
+    <form method="dialog"><button class="btn primary">Понятно</button></form>
+  </dialog>
+  <dialog id="terms">
+    <h3>Пользовательское соглашение</h3>
+    <p>Это учебный прототип голосового ассистента. Сервис предоставляется «как есть», данные могут быть удалены при
+      обновлении сервера. Не храните в нём важную или конфиденциальную информацию.</p>
+    <form method="dialog"><button class="btn primary">Понятно</button></form>
+  </dialog>
+  <dialog id="privacy">
+    <h3>Политика конфиденциальности</h3>
+    <p>Мы храним только имя, почту, хэш пароля (сам пароль не сохраняется) и ваши задачи. Речь распознаёт ваш браузер;
+      на сервер попадает только текст запроса. Данные не передаются третьим лицам.</p>
+    <form method="dialog"><button class="btn primary">Понятно</button></form>
+  </dialog>
+
+  <script src="/static/auth.js?v=15"></script>
+</body>
+</html>
