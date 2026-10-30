@@ -448,4 +448,9 @@ dialog h3 { margin: 0 0 10px; font-size: 22px; }
   .form-card { padding: 24px 18px; }
   .form-card h2 { font-size: 30px; }
   .rules { grid-template-columns: 1fr; }
+  .auth h1 { font-size: clamp(30px, 9vw, 44px); }
+  .auth h1 .mark { white-space: normal; }
+}
+@media (max-width: 420px) {
+  .hero h1 .mark { white-space: normal; }
 }
